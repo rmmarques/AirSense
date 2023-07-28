@@ -53,6 +53,7 @@ Point sensor("wifi_status");
 
 
 
+
 #define BME_SCK 13
 #define BME_MISO 12
 #define BME_MOSI 11
@@ -67,6 +68,9 @@ Point sensor("wifi_status");
 Adafruit_BME680 bme; // I2C version
 
 int readcounter = 0;
+
+unsigned long previousMillis = 0UL; //to replace delays
+unsigned long interval = 5000UL; //to replace delays
 
 
 //function declaration/prorotypes
@@ -118,15 +122,14 @@ void setup() {
     WiFi.begin(ssid, password);
     //Serial.println("Connecting");
     int i = 0;
-    while(WiFi.status() != WL_CONNECTED && i <50){
+    while(WiFi.status() != WL_CONNECTED && i <100){
         //Serial.print(".");
         i++;
         delay(100);
     }
 
 
-  tft.init(); //display
-  tft.setRotation(0); //display
+
 
 
     if(WiFi.status() == WL_CONNECTED){
@@ -135,7 +138,7 @@ void setup() {
       Serial.print("Local ESP32 IP: "); Serial.println(WiFi.localIP());
       timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");  
     }else{
-      Serial.println("Can't connect to WIFI");
+      Serial.println("Coudn't connect to WIFI");
     }
 
   
@@ -151,6 +154,8 @@ void setup() {
     sensor.addTag("SSID", "home");
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+  tft.init(); //initialize tft display
+  tft.setRotation(0); //set display rotation
 
   if (!bme.begin()) {
     Serial.println("Could not find a valid BME680 sensor, check wiring!");
@@ -185,22 +190,11 @@ void loop() {
  // tft.setCursor(0, 0, 2);
  // tft.setTextColor(TFT_WHITE,TFT_BLACK);  tft.setTextSize(1);
   
-  Serial.println();
 
   /*float valuepm10 = data.pm10_standard;
   float valuepm25 = data.pm25_standard;
   float valuepm100 = data.pm100_standard;*/
 
-
-  if (! bme.performReading()) {
-    Serial.println("Failed to perform reading :(");
-    return;
-  }
-
-
-  printtodisplay();//prints sensor data to display
-  printtoserial();//prints sensor data to serial
-  leds();//traffic light leds
 
   //Serial.print("Gas = "); Serial.print(bme.gas_resistance / 1000.0); Serial.println(" KOhms");
 
@@ -249,19 +243,27 @@ void loop() {
     //tolineprotocol just text thing?
 
 
-    pushtodatabase();
 
 
-    readcounter++; 
-    delay(10000); 
-}
+    unsigned long currentMillis = millis();
+
+    if(currentMillis - previousMillis > interval){
+ 	    previousMillis = currentMillis;  
+      
+      printtodisplay();//prints sensor data to display
+      printtoserial();//prints sensor data to serial
+      leds();//traffic light leds
+      pushtodatabase();//push sensor data to db
+      bme.performReading();//reads temp, hum, press from bme680
+    }
+
+  }
 
 void printtodisplay(){
-    tft.fillScreen(TFT_BLACK);
-  
-  tft.setCursor(0, 0, 2);
-  tft.setTextColor(TFT_WHITE,TFT_BLACK);  tft.setTextSize(1);
-  tft.print("Temperature: "); tft.print(bme.temperature); tft.println(" °C");
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(0, 0, 1);
+  tft.setTextColor(TFT_WHITE,TFT_BLACK);
+  tft.print("Temperature: "); tft.print(bme.temperature); tft.println(" C");
   tft.print("Humidity: "); tft.print(bme.humidity); tft.println(" %");
   tft.print("Pressure: "); tft.print(bme.pressure / 100.0); tft.println(" hPa");
   tft.print("TVOC: "); tft.print(ENS160.getTVOC()); tft.println(" ppb");
@@ -269,7 +271,8 @@ void printtodisplay(){
 }
 
 void printtoserial(){
-  Serial.print("Temperature: "); Serial.print(bme.temperature); Serial.println(" °C");
+  Serial.println();
+  Serial.print("Temperature: "); Serial.print(bme.temperature); Serial.println(" C");
   Serial.print("Humidity: "); Serial.print(bme.humidity); Serial.println(" %");
   Serial.print("Pressure: "); Serial.print(bme.pressure / 100.0); Serial.println(" hPa");
   Serial.print("TVOC: "); Serial.print(ENS160.getTVOC()); Serial.println(" ppb");
