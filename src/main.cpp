@@ -23,9 +23,8 @@ Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
 
 
 
-#define I2C_COMMUNICATION  //I2C communication. Comment out this line of code if you want to use SPI communication.
-
-DFRobot_ENS160_I2C ENS160(&Wire, /*I2CAddr*/ 0x53);
+//#define I2C_COMMUNICATION
+DFRobot_ENS160_I2C ENS160(&Wire, 0x53);
 
 
 
@@ -43,14 +42,14 @@ const char* password = "morangoscomacucar";
 #define INFLUXDB_ORG "a932d6a20e239b6a"
 #define INFLUXDB_BUCKET "humidityandtemperature"
   
-// Time zone info
-#define TZ_INFO "UTC1"///CHANGE TO CORRECT TIMEZONE//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Time zone for database
+#define TZ_INFO "UTC-1"
   
-  // Declare InfluxDB client instance with preconfigured InfluxCloud certificate
-  InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
+// Declare InfluxDB client instance with preconfigured InfluxCloud certificate
+InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
   
-  // Declare Data point
-  Point sensor("wifi_status");
+// Declare Data point
+Point sensor("wifi_status");
 
 
 
@@ -76,6 +75,7 @@ void printtodisplay();
 void printtoserial();
 void beep(int x);
 void leds();
+void pushtodatabase();
 
 void setup() {
   Serial.begin(115200);
@@ -181,10 +181,10 @@ struct pms5003data {
 void loop() {
 
       //NEW DISPLAY THINGS//////////////////////////////////////////////////////////////////////////////////////////
-  tft.fillScreen(TFT_BLACK);
+ // tft.fillScreen(TFT_BLACK);
   
-  tft.setCursor(0, 0, 2);
-  tft.setTextColor(TFT_WHITE,TFT_BLACK);  tft.setTextSize(1);
+ // tft.setCursor(0, 0, 2);
+ // tft.setTextColor(TFT_WHITE,TFT_BLACK);  tft.setTextSize(1);
   
   Serial.println();
 
@@ -231,19 +231,6 @@ void loop() {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////// WIFI and DB 
 
-// Clear fields for reusing the point. Tags will remain the same as set above.
-    sensor.clearFields();
-  
-    // Store measured value into point
-    sensor.addField("reading", readcounter);
-    sensor.addField("temperature", bme.temperature);
-    sensor.addField("humidity", bme.humidity);
-    sensor.addField("pressure", bme.pressure / 100);
-    //sensor.addField("pm10", valuepm10);
-    //sensor.addField("pm25", valuepm25);
-    //sensor.addField("pm100", valuepm100);
-
-    
     // Check WiFi and InfluxDB connection
     /*if (WiFi.status() != WL_CONNECTED) {
       Serial.println("Wifi not connected");
@@ -262,11 +249,8 @@ void loop() {
     //client writepoint writes to database
     //tolineprotocol just text thing?
 
-    //checks connection to db and wifi
-    if (client.writePoint(sensor) && WiFi.status() == WL_CONNECTED){
-          //prints what is being pushed to db
-          Serial.print("Writing: "); Serial.println(sensor.toLineProtocol());
-    }
+
+    pushtodatabase();
 
 
     readcounter++; 
@@ -274,6 +258,10 @@ void loop() {
 }
 
 void printtodisplay(){
+    tft.fillScreen(TFT_BLACK);
+  
+  tft.setCursor(0, 0, 2);
+  tft.setTextColor(TFT_WHITE,TFT_BLACK);  tft.setTextSize(1);
   tft.print("Temperature: "); tft.print(bme.temperature); tft.println(" °C");
   tft.print("Humidity: "); tft.print(bme.humidity); tft.println(" %");
   tft.print("Pressure: "); tft.print(bme.pressure / 100.0); tft.println(" hPa");
@@ -290,7 +278,21 @@ void printtoserial(){
 }
 
 void pushtodatabase(){
+  //Clear fields for reusing the point
+  sensor.clearFields();
+  
+  // Store measured value into point
+  sensor.addField("reading", readcounter);
+  sensor.addField("temperature", bme.temperature);
+  sensor.addField("humidity", bme.humidity);
+  sensor.addField("pressure", bme.pressure / 100);
+  sensor.addField("tvoc", ENS160.getTVOC());
+  sensor.addField("eco2", ENS160.getECO2());
 
+      if (client.writePoint(sensor) && WiFi.status() == WL_CONNECTED){
+          //prints what is being pushed to db
+          Serial.print("Writing: "); Serial.println(sensor.toLineProtocol());
+    }
 }
 
 void beep(int x){
@@ -302,9 +304,9 @@ void beep(int x){
     tone(16, 1000, 100);
   }
   if(x==3){
-    tone(16, 500, 50);
-    tone(16, 1000, 50);
-    tone(16, 1500, 50);
+    tone(16, 500, 75);
+    tone(16, 1000, 75);
+    tone(16, 1500, 75);
   }
 }
 
