@@ -4,20 +4,17 @@
 #include <Adafruit_Sensor.h>
 #include "Adafruit_BME680.h"
 #include <Adafruit_GFX.h>
-#include <WiFi.h>
+//#include <WiFi.h>
 #include <InfluxDbClient.h>
 #include <InfluxDbCloud.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <DFRobot_ENS160.h>
 #include <ESP32Encoder.h>
-
-
-
-
-
 #include "Adafruit_PM25AQI.h"
-Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
+#include <wifimanager.h>
+
+//Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
 
 
 
@@ -27,15 +24,9 @@ Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
 DFRobot_ENS160_I2C ENS160(&Wire, 0x53);
 
 
-
-
-
 // Invoke library, pins defined in User_Setup.h
 TFT_eSPI tft = TFT_eSPI(); 
 
-
-const char* ssid = "I am gonna kill your fucking dog";
-const char* password = "morangoscomacucar";
 
 #define DEVICE "ESP32"
 #define INFLUXDB_URL "https://eu-central-1-1.aws.cloud2.influxdata.com"
@@ -50,7 +41,9 @@ InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKE
 Point sensor("wifi_status");
 
 
-
+//WIFI//////////////////////////////////////////////////
+WiFiManager wm;
+////////////////////////////////////////////////////////
 //BME680////////////////////////////////////////////////
 #define SEALEVELPRESSURE_HPA (1017)
 Adafruit_BME680 bme;
@@ -78,21 +71,25 @@ String refresh;//need a separate frequency for encoder
 unsigned long encodercurrentMillis;
 unsigned long encoderpreviousMillis = 0UL; 
 ////////////////////////////////////////////////////////
-
-
-// Connections for PM2.5 Sensor
+//PMS5003///////////////////////////////////////////////
 #define RXD2 34 // To sensor TXD
 #define TXD2 33 // To sensor RXD
+int particles03um;
+int particles05um;
+int particles10um;
+int particles25um;
+int particles50um;
+int particles100um;
+int pm10standard;
+int pm25standard;
+int pm100standard;
 
-    int particles03um;
-    int particles05um;
-    int particles10um;
-    int particles25um;
-    int particles50um;
-    int particles100um;
-    int pm10standard;
-    int pm25standard;
-    int pm100standard;
+
+
+
+
+////////////////////////////////////////////////////////
+
 
 
 unsigned long previousMillis = 0UL; //to replace delays
@@ -107,18 +104,46 @@ void beep(int x);
 void leds();
 void pushtodatabase();
 String CalculateIAQ(int score);
+String UpdateFrequency(int encodervalue);
 void GetGasReference();
 int GetHumidityScore();
 int GetGasScore();
-
 boolean readPMSdata(Stream* stream);
 
 
 void setup() {
+  beep(1);//one beep on startup
   Serial.begin(115200);
   while (!Serial);
   Serial1.begin(9600, SERIAL_8N1, RXD2, TXD2);//serial just for pms5003
   while (!Serial1);
+
+
+
+    // reset settings - wipe stored credentials for testing
+    wm.resetSettings();
+
+    wm.setTimeout(120);
+    bool res;
+    res = wm.autoConnect("AirSenseAP");
+
+    if(!res) Serial.println("cant connect to wifi");
+    else {
+      Serial.println("connected to wifi :)");
+      beep(2);
+    }
+
+    // Connect to InfluxDB
+    if (client.validateConnection()) {
+      beep(3);//three beeps when connected to db
+      Serial.print("Connected to InfluxDB: "); Serial.println(client.getServerUrl());
+    } else {
+      Serial.print("InfluxDB "); Serial.println(client.getLastErrorMessage());
+    }
+    // Add tags to the data sent do db
+    sensor.addTag("device", DEVICE);
+    sensor.addTag("SSID", "home");
+
 
   Wire.begin();
   bme.begin();
@@ -141,12 +166,10 @@ void setup() {
 
 
   ESP32Encoder::useInternalWeakPullResistors=UP;
-
 	// use pin 19 and 18 for the first encoder
 	encoder.attachHalfQuad(26, 25);
-
 	// set starting count value after attaching
-	encoder.setCount(50);
+	encoder.setCount(40);
 
 
   // Init the TVOC and eCO2
@@ -154,11 +177,9 @@ void setup() {
     //Serial.println("Communication with device failed, please check connection");
     //delay(3000);
   //}
-  Serial.println("Begin ok!");
+  //ENS160.setPWRMode(ENS160_STANDARD_MODE);
 
-  ENS160.setPWRMode(ENS160_STANDARD_MODE);
-
-  ENS160.setTempAndHum(/*temperature=*/25.0, /*humidity=*/50.0);
+  //ENS160.setTempAndHum(/*temperature=*/25.0, /*humidity=*/50.0);
 
 
 
@@ -166,43 +187,6 @@ void setup() {
   pinMode(YELLOW_PIN, OUTPUT);
   pinMode(GREEN_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);//buzzer
-  beep(1);//one beep on startup
-
-  /////////////////////////////////////////////////////////////////////////////////////////WIFI and DB
-    WiFi.begin(ssid, password);
-    //Serial.println("Connecting");
-    int i = 0;
-    while(WiFi.status() != WL_CONNECTED && i <100){
-        //Serial.print(".");
-        i++;
-        delay(100);
-    }
-
-
-
-
-
-    if(WiFi.status() == WL_CONNECTED){
-      beep(2);//two beeps when connected to wifi
-      Serial.println("Connected to WiFi");
-      Serial.print("Local ESP32 IP: "); Serial.println(WiFi.localIP());
-      timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");  
-    }else{
-      Serial.println("Coudn't connect to WIFI");
-    }
-
-  
-    // Connect to InfluxDB
-    if (client.validateConnection()) {
-      beep(3);//three beeps when connected to db
-      Serial.print("Connected to InfluxDB: "); Serial.println(client.getServerUrl());
-    } else {
-      Serial.print("InfluxDB "); Serial.println(client.getLastErrorMessage());
-    }
-    // Add tags to the data sent do db
-    sensor.addTag("device", DEVICE);
-    sensor.addTag("SSID", "home");
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   tft.init(); //initialize tft display
   tft.fillScreen(TFT_BLACK);
@@ -225,49 +209,11 @@ struct pms5003data data;
 
 void loop() {
 
-
-  if(encoder.getCount()>100){
-    encoder.setCount(100);
+  if(encoder.getCount()>80){
+    encoder.setCount(80);
   }else if(encoder.getCount()<0){
     encoder.setCount(0);
   }
-
-
-    if(encoder.getCount()>=100){
-    interval = 300000UL;
-    refresh = "300s   \n/                   ";
-  }else if(encoder.getCount()<100 && encoder.getCount() >=90){
-    interval = 200000UL;
-    refresh = "200s   \n///                 ";
-  }else if(encoder.getCount()<90 && encoder.getCount() >=80){
-    interval = 150000UL;
-    refresh = "150s   \n/////               ";
-  }else if(encoder.getCount()<80 && encoder.getCount() >=70){
-    interval = 100000UL;
-    refresh = "100s   \n///////            ";
-  }else if(encoder.getCount()<70 && encoder.getCount() >=60){
-    interval = 80000UL;
-    refresh = "80s    \n/////////           ";
-  }else if(encoder.getCount()<60 && encoder.getCount() >=50){
-    interval = 60000UL;
-    refresh = "60s    \n///////////         ";
-  }else if(encoder.getCount()<50 && encoder.getCount() >=40){
-    interval = 50000UL;
-    refresh = "50s    \n/////////////        ";
-  }else if(encoder.getCount()<40 && encoder.getCount() >=30){
-    interval = 40000UL;
-    refresh = "40s    \n///////////////      ";
-  }else if(encoder.getCount()<30 && encoder.getCount() >=20){
-    interval = 30000UL;
-    refresh = "30s    \n/////////////////    ";
-  }else if(encoder.getCount()<20 && encoder.getCount() >=10){
-    interval = 20000UL;
-    refresh = "20s    \n///////////////////  ";
-  }else if(encoder.getCount()<10 && encoder.getCount() >=0){
-    interval = 1000UL;
-    refresh = "10s    \n/////////////////////";
-  }
-  
 
   if (readPMSdata(&Serial1)){ //pms5003 is a little bitch and needs to read constantly like this or else it will throw a checksum error
     particles03um = data.particles_03um;
@@ -300,20 +246,18 @@ void loop() {
     //client writepoint writes to database
     //tolineprotocol just text thing?
     encodercurrentMillis = millis();
-
-    if(encodercurrentMillis - encoderpreviousMillis > 17L){
+    if(encodercurrentMillis - encoderpreviousMillis > 33L){
  	    encoderpreviousMillis = encodercurrentMillis;  
+
         tft.setCursor(0, 145, 1);
         tft.setTextColor(TFT_WHITE,TFT_BLACK);
-        tft.print("Update Freq - ");
-        tft.print(refresh);
-
-
+        //tft.print("Update Freq - ");
+        //tft.print(refresh);
+        tft.print(UpdateFrequency(encoder.getCount()));
     }
       
 
     currentMillis = millis();
-
     if(currentMillis - previousMillis > interval){
  	    previousMillis = currentMillis;  
       
@@ -329,7 +273,6 @@ void loop() {
       printtoserial();//prints sensor data to serial
       leds();//traffic light leds
       pushtodatabase();//push sensor data to db
-
       }
     
 
@@ -350,7 +293,7 @@ void printtodisplay(){
 
 void printtoserial(){
   Serial.println();
-  Serial.println("  Update Freq = " + String(interval/1000)               + "s\n");
+  Serial.println(" Refresh Rate = " + String(interval/1000)               + "s\n");
   Serial.println("  Temperature = " + String(bme.temperature)             + "°C");
   Serial.println("     Humidity = " + String(bme.humidity)                + "%");
   Serial.println("     Pressure = " + String(bme.pressure / 100)          + " hPa");
@@ -399,12 +342,10 @@ void pushtodatabase(){
 void beep(int x){
   if(x==1){
     tone(BUZZER_PIN, 500, 200);
-  }
-  if(x==2){
+  }else if(x==2){
     tone(BUZZER_PIN, 500, 100);
     tone(BUZZER_PIN, 1000, 100);
-  }
-  if(x==3){
+  }else if(x==3){
     tone(BUZZER_PIN, 500, 75);
     tone(BUZZER_PIN, 1000, 75);
     tone(BUZZER_PIN, 1500, 75);
@@ -412,19 +353,58 @@ void beep(int x){
 }
 
 void leds(){
-    if(bme.humidity >= 60){
-      digitalWrite(RED_PIN, HIGH); //red led
-      digitalWrite(YELLOW_PIN, LOW);
-      digitalWrite(GREEN_PIN, LOW);
-    }else if(bme.humidity < 60 && bme.humidity >= 50){
-      digitalWrite(RED_PIN, LOW);
-      digitalWrite(YELLOW_PIN, HIGH); //yellow led
-      digitalWrite(GREEN_PIN, LOW);
-    }else{
-      digitalWrite(RED_PIN, LOW);
-      digitalWrite(YELLOW_PIN, LOW);
-      digitalWrite(GREEN_PIN, HIGH); //green led
-    }
+  if(bme.humidity >= 60){
+    digitalWrite(RED_PIN, HIGH); //red led
+    digitalWrite(YELLOW_PIN, LOW);
+    digitalWrite(GREEN_PIN, LOW);
+  }else if(bme.humidity <= 59 && bme.humidity >= 50){
+    digitalWrite(RED_PIN, LOW);
+    digitalWrite(YELLOW_PIN, HIGH); //yellow led
+    digitalWrite(GREEN_PIN, LOW);
+  }else{
+    digitalWrite(RED_PIN, LOW);
+    digitalWrite(YELLOW_PIN, LOW);
+    digitalWrite(GREEN_PIN, HIGH); //green led
+  }
+}
+
+String UpdateFrequency(int encodervalue) {
+  String frequencytext = "Refresh Rate - ";
+  if       (encodervalue >= 80                      ){
+    interval = 300000UL;
+    frequencytext += "300s  \n/                    ";
+  }else if (encodervalue >= 72 && encodervalue <= 79 ){
+    interval = 200000UL;
+    frequencytext += "200s  \n///                  ";
+  }else if (encodervalue >= 64 && encodervalue <= 71 ){ 
+    interval = 150000UL;
+    frequencytext += "150s  \n/////                ";
+  }else if (encodervalue >= 56 && encodervalue <= 63 ){ 
+    interval = 100000UL;
+    frequencytext += "100s  \n///////              ";
+  }else if (encodervalue >= 48 && encodervalue <= 55 ){ 
+    interval = 80000UL;
+    frequencytext += "80s   \n/////////            ";
+  }else if (encodervalue >= 40 && encodervalue <= 47 ){ 
+    interval = 60000UL;
+    frequencytext += "60s   \n///////////          ";
+  }else if (encodervalue >= 32 && encodervalue <= 39 ){ 
+    interval = 50000UL;
+    frequencytext += "50s   \n/////////////        ";
+  }else if (encodervalue >= 24 && encodervalue <= 31 ){ 
+    interval = 40000UL;
+    frequencytext += "40s   \n///////////////      ";
+  }else if (encodervalue >= 16 && encodervalue <= 23 ){ 
+    interval = 30000UL;
+    frequencytext += "30s   \n/////////////////    ";
+  }else if (encodervalue >= 8  && encodervalue <= 15 ){ 
+    interval = 20000UL;
+    frequencytext += "20s   \n///////////////////  ";
+  }else if (                      encodervalue <=  7 ){ 
+    interval = 10000UL;
+    frequencytext += "10s   \n/////////////////////";
+  }
+  return frequencytext;
 }
 
 //fixes the problem with adafruit's pms library not working after 24h, no idea how it works
