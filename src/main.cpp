@@ -4,7 +4,6 @@
 #include <Adafruit_Sensor.h>
 #include "Adafruit_BME680.h"
 #include <Adafruit_GFX.h>
-//#include <WiFi.h>
 #include <InfluxDbClient.h>
 #include <InfluxDbCloud.h>
 #include <TFT_eSPI.h>
@@ -14,14 +13,10 @@
 #include "Adafruit_PM25AQI.h"
 #include <wifimanager.h>
 
-//Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
-
-
-
 
 
 //#define I2C_COMMUNICATION
-DFRobot_ENS160_I2C ENS160(&Wire, 0x53);
+//DFRobot_ENS160_I2C ENS160(&Wire, 0x53);
 
 
 // Invoke library, pins defined in User_Setup.h
@@ -40,7 +35,9 @@ InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKE
 // Declare Data point
 Point sensor("wifi_status");
 
+//DATABASE//////////////////////////////////////////////
 
+////////////////////////////////////////////////////////
 //WIFI//////////////////////////////////////////////////
 WiFiManager wm;
 ////////////////////////////////////////////////////////
@@ -83,11 +80,6 @@ int particles100um;
 int pm10standard;
 int pm25standard;
 int pm100standard;
-
-
-
-
-
 ////////////////////////////////////////////////////////
 
 
@@ -97,7 +89,7 @@ unsigned long interval = 10000UL; //to replace delays
 unsigned long currentMillis;
 
 
-//function declaration/prorotypes
+//function declarations
 void printtodisplay();
 void printtoserial();
 void beep(int x);
@@ -114,22 +106,32 @@ boolean readPMSdata(Stream* stream);
 void setup() {
   beep(1);//one beep on startup
   Serial.begin(115200);
-  while (!Serial);
-  Serial1.begin(9600, SERIAL_8N1, RXD2, TXD2);//serial just for pms5003
-  while (!Serial1);
+  //while (!Serial);
+  //while (!Serial1);
+
+  tft.init(); //initialize tft display
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(0, 50, 4);
+  tft.setTextColor(TFT_WHITE,TFT_BLACK);
+  tft.setRotation(0); //set display rotation
+  tft.println("Air\nSense");
+  tft.setTextFont(2),
+  tft.println("V1.0");
 
 
 
     // reset settings - wipe stored credentials for testing
-    wm.resetSettings();
-
+    //wm.resetSettings();
+    WiFiManagerParameter system_name("system_name", "System Name", "AirSense", 20);
+    wm.addParameter(&system_name);
     wm.setTimeout(120);
     bool res;
     res = wm.autoConnect("AirSenseAP");
 
     if(!res) Serial.println("cant connect to wifi");
     else {
-      Serial.println("connected to wifi :)");
+      Serial.print(system_name.getValue());
+      Serial.println(" connected to wifi :)");
       beep(2);
     }
 
@@ -137,17 +139,15 @@ void setup() {
     if (client.validateConnection()) {
       beep(3);//three beeps when connected to db
       Serial.print("Connected to InfluxDB: "); Serial.println(client.getServerUrl());
-    } else {
-      Serial.print("InfluxDB "); Serial.println(client.getLastErrorMessage());
-    }
+    } else Serial.print("InfluxDB "); Serial.println(client.getLastErrorMessage());
+
     // Add tags to the data sent do db
     sensor.addTag("device", DEVICE);
-    sensor.addTag("SSID", "home");
+    sensor.addTag("System", system_name.getValue());
 
 
   Wire.begin();
   bme.begin();
-
 
 
   //bme680 oversampling and filter initialization
@@ -158,18 +158,14 @@ void setup() {
   bme.setGasHeater(320, 150); // 320*C for 150 ms 
   // Now run the sensor to normalise the readings, then use combination of relative humidity and gas resistance to estimate indoor air quality as a percentage.
   // The sensor takes ~30-mins to fully stabilise
-  GetGasReference();
-
-
-
-
+  //GetGasReference();
 
 
   ESP32Encoder::useInternalWeakPullResistors=UP;
 	// use pin 19 and 18 for the first encoder
 	encoder.attachHalfQuad(26, 25);
 	// set starting count value after attaching
-	encoder.setCount(40);
+	encoder.setCount(30);
 
 
   // Init the TVOC and eCO2
@@ -178,8 +174,10 @@ void setup() {
     //delay(3000);
   //}
   //ENS160.setPWRMode(ENS160_STANDARD_MODE);
-
   //ENS160.setTempAndHum(/*temperature=*/25.0, /*humidity=*/50.0);
+
+  Serial1.begin(9600, SERIAL_8N1, RXD2, TXD2);//serial just for pms5003
+  if (!Serial1) beep(3);
 
 
 
@@ -188,13 +186,7 @@ void setup() {
   pinMode(GREEN_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);//buzzer
 
-  tft.init(); //initialize tft display
   tft.fillScreen(TFT_BLACK);
-  tft.setCursor(0, 0, 1);
-  tft.setRotation(0); //set display rotation
-
-
-
 }
 
 struct pms5003data {
@@ -209,11 +201,12 @@ struct pms5003data data;
 
 void loop() {
 
-  if(encoder.getCount()>80){
-    encoder.setCount(80);
+  if(encoder.getCount()>60){
+    encoder.setCount(60);
   }else if(encoder.getCount()<0){
     encoder.setCount(0);
   }
+
 
   if (readPMSdata(&Serial1)){ //pms5003 is a little bitch and needs to read constantly like this or else it will throw a checksum error
     particles03um = data.particles_03um;
@@ -226,64 +219,45 @@ void loop() {
     pm25standard = data.pm25_standard;
     pm100standard = data.pm100_standard;
     }
-//////////////////////////////////////////////////////////////////////////////////////////////////////// WIFI and DB 
 
-    // Check WiFi and InfluxDB connection
-    /*if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("Wifi not connected");
-      display.println("Wifi not connected");
-    }else{
-      Serial.println("Wifi connected");
-      display.println("Wifi connected");
-    }*/
-  
-    /*if (!client.writePoint(sensor)) {
-      Serial.print("InfluxDB "); Serial.println(client.getLastErrorMessage());
-    }else{
-      Serial.println("InfluxDB connected");
-      display.println("InfluxDB connected");
-    }*/
-    //client writepoint writes to database
-    //tolineprotocol just text thing?
+    
     encodercurrentMillis = millis();
     if(encodercurrentMillis - encoderpreviousMillis > 33L){
  	    encoderpreviousMillis = encodercurrentMillis;  
 
         tft.setCursor(0, 145, 1);
         tft.setTextColor(TFT_WHITE,TFT_BLACK);
-        //tft.print("Update Freq - ");
-        //tft.print(refresh);
         tft.print(UpdateFrequency(encoder.getCount()));
     }
-      
+          while(millis()< 15000) interval = 1000UL;
+
 
     currentMillis = millis();
     if(currentMillis - previousMillis > interval){
  	    previousMillis = currentMillis;  
       
-      humidity_score = GetHumidityScore();
-      gas_score      = GetGasScore();
+      //humidity_score = GetHumidityScore();
+      //gas_score      = GetGasScore();
 
       //Combine results for the final IAQ index value (0-100% where 100% is good quality air)
-      air_quality_score = humidity_score + gas_score;
-      if ((getgasreference_count++) % 5 == 0) GetGasReference();
-      Serial.println(CalculateIAQ(air_quality_score));
+      //air_quality_score = humidity_score + gas_score;
+      //if ((getgasreference_count++) % 5 == 0) GetGasReference();
+      //Serial.println(CalculateIAQ(air_quality_score));
 
       printtodisplay();//prints sensor data to display
       printtoserial();//prints sensor data to serial
       leds();//traffic light leds
       pushtodatabase();//push sensor data to db
-      }
     
-
   }
+}
 
 void printtodisplay(){
   tft.setCursor(0, 0, 1);
   tft.setTextColor(TFT_WHITE,TFT_BLACK);
-  tft.print("Temperature: "); tft.print(bme.temperature); tft.println(" C");
-  tft.print("Humidity: "); tft.print(bme.humidity); tft.println(" %");
-  tft.print("Pressure: "); tft.print(bme.pressure / 100.0); tft.println(" hPa");
+  tft.print("Temperature: "); tft.print(bme.readTemperature()); tft.println(" C");
+  tft.print("Humidity: "); tft.print(bme.readHumidity()); tft.println(" %");
+  tft.print("Pressure: "); tft.print(bme.readPressure() / 100.0); tft.println(" hPa");
   //tft.print("TVOC: "); tft.print(ENS160.getTVOC()); tft.println(" ppb");
   //tft.print("eCO2: "); tft.print(ENS160.getECO2()); tft.println(" ppm");
   tft.println("PM 1.0 = " + String(pm10standard)                      );
@@ -297,7 +271,7 @@ void printtoserial(){
   Serial.println("  Temperature = " + String(bme.temperature)             + "°C");
   Serial.println("     Humidity = " + String(bme.humidity)                + "%");
   Serial.println("     Pressure = " + String(bme.pressure / 100)          + " hPa");
-  Serial.println("          Gas = " + String(gas_reference)               + " ohms\n");
+  //Serial.println("          Gas = " + String(gas_reference)               + " ohms\n");
   //Serial.println("         TVOC = " + String(ENS160.getTVOC())            + "ppb");
   //Serial.println("         eCO2 = " + String(ENS160.getECO2())            + "ppm\n");
   Serial.println("       PM 1.0 = " + String(pm10standard)                      );
@@ -331,12 +305,13 @@ void pushtodatabase(){
   sensor.addField("particles25", particles25um);
   sensor.addField("particles50", particles50um);
   sensor.addField("particles100", particles100um);
-  sensor.addField("airqualityscore", (100-air_quality_score) * 5);
+  //sensor.addField("airqualityscore", (100-air_quality_score) * 5);
 
   if (client.writePoint(sensor) && WiFi.status() == WL_CONNECTED){
-    //prints what is being pushed to db
     Serial.print("Writing: "); Serial.println(sensor.toLineProtocol());
-  }
+  }//else if(WiFi.status() == !WL_CONNECTED && millis() > 10800000 ){
+    //ESP.restart();
+  //}
 }
 
 void beep(int x){
@@ -370,37 +345,37 @@ void leds(){
 
 String UpdateFrequency(int encodervalue) {
   String frequencytext = "Refresh Rate - ";
-  if       (encodervalue >= 80                      ){
+  if       (encodervalue >= 60                      ){
     interval = 300000UL;
     frequencytext += "300s  \n/                    ";
-  }else if (encodervalue >= 72 && encodervalue <= 79 ){
+  }else if (encodervalue >= 54 && encodervalue <= 59 ){
     interval = 200000UL;
     frequencytext += "200s  \n///                  ";
-  }else if (encodervalue >= 64 && encodervalue <= 71 ){ 
+  }else if (encodervalue >= 48 && encodervalue <= 53 ){ 
     interval = 150000UL;
     frequencytext += "150s  \n/////                ";
-  }else if (encodervalue >= 56 && encodervalue <= 63 ){ 
+  }else if (encodervalue >= 42 && encodervalue <= 47 ){ 
     interval = 100000UL;
     frequencytext += "100s  \n///////              ";
-  }else if (encodervalue >= 48 && encodervalue <= 55 ){ 
+  }else if (encodervalue >= 36 && encodervalue <= 41 ){ 
     interval = 80000UL;
     frequencytext += "80s   \n/////////            ";
-  }else if (encodervalue >= 40 && encodervalue <= 47 ){ 
+  }else if (encodervalue >= 30 && encodervalue <= 35 ){ 
     interval = 60000UL;
     frequencytext += "60s   \n///////////          ";
-  }else if (encodervalue >= 32 && encodervalue <= 39 ){ 
+  }else if (encodervalue >= 24 && encodervalue <= 29 ){ 
     interval = 50000UL;
     frequencytext += "50s   \n/////////////        ";
-  }else if (encodervalue >= 24 && encodervalue <= 31 ){ 
+  }else if (encodervalue >= 18 && encodervalue <= 23 ){ 
     interval = 40000UL;
     frequencytext += "40s   \n///////////////      ";
-  }else if (encodervalue >= 16 && encodervalue <= 23 ){ 
+  }else if (encodervalue >= 12 && encodervalue <= 17 ){ 
     interval = 30000UL;
     frequencytext += "30s   \n/////////////////    ";
-  }else if (encodervalue >= 8  && encodervalue <= 15 ){ 
+  }else if (encodervalue >= 6  && encodervalue <= 11 ){ 
     interval = 20000UL;
     frequencytext += "20s   \n///////////////////  ";
-  }else if (                      encodervalue <=  7 ){ 
+  }else if (                      encodervalue <=  5 ){ 
     interval = 10000UL;
     frequencytext += "10s   \n/////////////////////";
   }
@@ -451,7 +426,7 @@ boolean readPMSdata(Stream *s) {
   return true;
 }
 
-void GetGasReference() {
+/*void GetGasReference() {
   // Now run the sensor for a burn-in period, then use combination of relative humidity and gas resistance to estimate indoor air quality as a percentage.
   Serial.println("Getting a new gas reference value");
   int readings = 10;
@@ -497,4 +472,4 @@ int GetGasScore() {
   if (gas_score > 75) gas_score = 75;
   if (gas_score <  0) gas_score = 0;
   return gas_score;
-}
+}*/
