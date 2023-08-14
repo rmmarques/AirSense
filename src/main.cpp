@@ -12,31 +12,18 @@
 #include <ESP32Encoder.h>
 #include "Adafruit_PM25AQI.h"
 #include <wifimanager.h>
+#include <Adafruit_BME280.h>
+#include "SparkFun_SCD4x_Arduino_Library.h"
 
-
-
-//#define I2C_COMMUNICATION
-//DFRobot_ENS160_I2C ENS160(&Wire, 0x53);
-
-
-// Invoke library, pins defined in User_Setup.h
-TFT_eSPI tft = TFT_eSPI(); 
-
-
+//DATABASE//////////////////////////////////////////////
 #define DEVICE "ESP32"
 #define INFLUXDB_URL "https://eu-central-1-1.aws.cloud2.influxdata.com"
 #define INFLUXDB_TOKEN "OvK1qsQXDixTlkudQhyGPr9STmRJH1tNfD-Ma3-T7CqPfEi1i4mqTLZfegJ9Q-ZCp0Ef7t4j_HQUS457ThNt9A=="
 #define INFLUXDB_ORG "a932d6a20e239b6a"
 #define INFLUXDB_BUCKET "humidityandtemperature"
-// Time zone for database
 #define TZ_INFO "UTC-1"
-// Declare InfluxDB client instance with preconfigured InfluxCloud certificate
-InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
-// Declare Data point
-Point sensor("wifi_status");
-
-//DATABASE//////////////////////////////////////////////
-
+InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);// Declare InfluxDB client instance with preconfigured InfluxCloud certificate
+Point sensor("wifi_status");// Declare Data point
 ////////////////////////////////////////////////////////
 //WIFI//////////////////////////////////////////////////
 WiFiManager wm;
@@ -53,6 +40,12 @@ int   getgasreference_count = 0;
 int   gas_lower_limit = 10000;  // Bad air quality limit
 int   gas_upper_limit = 300000; // Good air quality limit
 int   iaq;
+////////////////////////////////////////////////////////
+//BME280////////////////////////////////////////////////
+Adafruit_BME280 bme280;
+////////////////////////////////////////////////////////
+//SDC41/////////////////////////////////////////////////
+SCD4x sdc41;
 ////////////////////////////////////////////////////////
 //LEDS//////////////////////////////////////////////////
 #define RED_PIN 13
@@ -81,13 +74,18 @@ int pm10standard;
 int pm25standard;
 int pm100standard;
 ////////////////////////////////////////////////////////
+//DISPLAY///////////////////////////////////////////////
+TFT_eSPI tft = TFT_eSPI(); 
+////////////////////////////////////////////////////////
 
 
+//TVOC///////////////////////////////////////////////
+//#define I2C_COMMUNICATION
+//DFRobot_ENS160_I2C ENS160(&Wire, 0x53);
 
 unsigned long previousMillis = 0UL; //to replace delays
 unsigned long interval = 10000UL; //to replace delays
 unsigned long currentMillis;
-
 
 //function declarations
 void printtodisplay();
@@ -106,13 +104,13 @@ boolean readPMSdata(Stream* stream);
 void setup() {
   beep(1);//one beep on startup
   Serial.begin(115200);
-  //while (!Serial);
-  //while (!Serial1);
+
 
   tft.init(); //initialize tft display
   tft.fillScreen(TFT_BLACK);
   tft.setCursor(0, 50, 4);
-  tft.setTextColor(TFT_WHITE,TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
+  tft.fillRectVGradient(0, 0, 128, 160, TFT_ORANGE, TFT_RED);
   tft.setRotation(0); //set display rotation
   tft.println("Air\nSense");
   tft.setTextFont(2),
@@ -147,7 +145,9 @@ void setup() {
 
 
   Wire.begin();
-  bme.begin();
+  bme.begin();  
+  bme280.begin(0x76);
+  sdc41.begin();
 
 
   //bme680 oversampling and filter initialization
@@ -155,7 +155,7 @@ void setup() {
   bme.setHumidityOversampling(BME680_OS_2X);
   bme.setPressureOversampling(BME680_OS_4X);
   bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-  bme.setGasHeater(320, 150); // 320*C for 150 ms 
+  //bme.setGasHeater(320, 150); // 320*C for 150 ms 
   // Now run the sensor to normalise the readings, then use combination of relative humidity and gas resistance to estimate indoor air quality as a percentage.
   // The sensor takes ~30-mins to fully stabilise
   //GetGasReference();
@@ -208,7 +208,7 @@ void loop() {
   }
 
 
-  if (readPMSdata(&Serial1)){ //pms5003 is a little bitch and needs to read constantly like this or else it will throw a checksum error
+  if (readPMSdata(&Serial1)){ //pms5003 is a little bitch and needs to read constantly or else it will throw a checksum error
     particles03um = data.particles_03um;
     particles05um = data.particles_05um;
     particles10um = data.particles_10um;
@@ -256,8 +256,14 @@ void printtodisplay(){
   tft.setCursor(0, 0, 1);
   tft.setTextColor(TFT_WHITE,TFT_BLACK);
   tft.print("Temperature: "); tft.print(bme.readTemperature()); tft.println(" C");
+  tft.print("Temperature2: "); tft.print(bme280.readTemperature()); tft.println(" C");
+  tft.print("Temperature3: "); tft.print(sdc41.getTemperature()); tft.println(" C");
   tft.print("Humidity: "); tft.print(bme.readHumidity()); tft.println(" %");
+  tft.print("Humidity2: "); tft.print(bme280.readHumidity()); tft.println(" %");
+  tft.print("Humidity3: "); tft.print(sdc41.getHumidity()); tft.println(" %");
   tft.print("Pressure: "); tft.print(bme.readPressure() / 100.0); tft.println(" hPa");
+  tft.print("Pressure2: "); tft.print(bme280.readPressure() / 100.0); tft.println(" hPa");
+  tft.print("CO2: "); tft.print(sdc41.getCO2()); tft.println(" hPa");
   //tft.print("TVOC: "); tft.print(ENS160.getTVOC()); tft.println(" ppb");
   //tft.print("eCO2: "); tft.print(ENS160.getECO2()); tft.println(" ppm");
   tft.println("PM 1.0 = " + String(pm10standard)                      );
@@ -269,8 +275,14 @@ void printtoserial(){
   Serial.println();
   Serial.println(" Refresh Rate = " + String(interval/1000)               + "s\n");
   Serial.println("  Temperature = " + String(bme.temperature)             + "°C");
+  Serial.println(" Temperature2 = " + String(bme280.readTemperature())    + "°C");
+  Serial.println(" Temperature3 = " + String(sdc41.getTemperature())      + "°C");
   Serial.println("     Humidity = " + String(bme.humidity)                + "%");
+  Serial.println("    Humidity2 = " + String(bme280.readHumidity())       + "%");
+  Serial.println("    Humidity3 = " + String(sdc41.getHumidity())         + "%");
   Serial.println("     Pressure = " + String(bme.pressure / 100)          + " hPa");
+  Serial.println("    Pressure2 = " + String(bme280.readPressure() / 100) + " hPa");
+  Serial.println("          CO2 = " + String(sdc41.getCO2()) + " hPa");
   //Serial.println("          Gas = " + String(gas_reference)               + " ohms\n");
   //Serial.println("         TVOC = " + String(ENS160.getTVOC())            + "ppb");
   //Serial.println("         eCO2 = " + String(ENS160.getECO2())            + "ppm\n");
@@ -294,6 +306,12 @@ void pushtodatabase(){
   sensor.addField("temperature", bme.temperature);
   sensor.addField("humidity", bme.humidity);
   sensor.addField("pressure", bme.pressure / 100);
+  sensor.addField("temperature2", bme280.readTemperature());
+  sensor.addField("humidity2", bme280.readHumidity());
+  sensor.addField("pressure2", bme280.readPressure() / 100);
+  sensor.addField("temperature3", sdc41.getTemperature());
+  sensor.addField("humidity3", sdc41.getHumidity());
+  sensor.addField("co2", sdc41.getCO2());
   //sensor.addField("tvoc", ENS160.getTVOC());
   //sensor.addField("eco2", ENS160.getECO2());
   sensor.addField("pm10", pm10standard);
@@ -309,9 +327,9 @@ void pushtodatabase(){
 
   if (client.writePoint(sensor) && WiFi.status() == WL_CONNECTED){
     Serial.print("Writing: "); Serial.println(sensor.toLineProtocol());
-  }//else if(WiFi.status() == !WL_CONNECTED && millis() > 10800000 ){
-    //ESP.restart();
-  //}
+  }else if(WiFi.status() == !WL_CONNECTED && millis() > 10800000 ){
+    ESP.restart();
+  }
 }
 
 void beep(int x){
@@ -327,12 +345,12 @@ void beep(int x){
   }
 }
 
-void leds(){
+void leds(){//fix the int/float thing
   if(bme.humidity >= 60){
     digitalWrite(RED_PIN, HIGH); //red led
     digitalWrite(YELLOW_PIN, LOW);
     digitalWrite(GREEN_PIN, LOW);
-  }else if(bme.humidity <= 59 && bme.humidity >= 50){
+  }else if(bme.humidity >= 55 && bme.humidity < 60){
     digitalWrite(RED_PIN, LOW);
     digitalWrite(YELLOW_PIN, HIGH); //yellow led
     digitalWrite(GREEN_PIN, LOW);
@@ -384,9 +402,7 @@ String UpdateFrequency(int encodervalue) {
 
 //fixes the problem with adafruit's pms library not working after 24h, no idea how it works
 boolean readPMSdata(Stream *s) {
-  if (! s->available()) {
-    return false;
-  }
+  if (! s->available()) return false;
 
   // Read a byte at a time until we get to the special '0x42' start-byte
   if (s->peek() != 0x42) {
@@ -395,10 +411,8 @@ boolean readPMSdata(Stream *s) {
   }
 
   // Now read all 32 bytes
-  if (s->available() < 32) {
-    return false;
-  }
-
+  if (s->available() < 32) return false;
+  
   uint8_t buffer[32];
   uint16_t sum = 0;
   s->readBytes(buffer, 32);
